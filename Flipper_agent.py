@@ -1,23 +1,78 @@
 import streamlit as st
 import json
 import base64
+import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # -----------------------------
-# GOOGLE SHEETS PLACEHOLDERS
+# GOOGLE SHEETS SETUP
 # -----------------------------
-USE_SHEETS = False  # Change to True when you're ready
+def get_sheet():
+    try:
+        creds_json = st.secrets["gcp_service_account"]
+        sheet_name = st.secrets["sheet_name"]
 
-SHEET_NAME = "MyFlashcardsDB"
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            json.loads(creds_json),
+            ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        )
 
+        client = gspread.authorize(creds)
+        sheet = client.open(sheet_name).sheet1
+        return sheet
+    except:
+        return None
+
+
+# -----------------------------
+# LOAD FROM GOOGLE SHEETS
+# -----------------------------
 def load_from_sheets():
-    return []  # Placeholder for now
+    sheet = get_sheet()
+    if sheet is None:
+        return None
 
-def save_to_sheets(data):
-    pass  # Placeholder for now
+    data = sheet.get_all_records()
+    books = []
+
+    for row in data:
+        flashcards = json.loads(row["flashcards_json"]) if row["flashcards_json"] else []
+        books.append({
+            "title": row["title"],
+            "status": row["status"],
+            "cover_base64": row["cover_base64"],
+            "flashcards": flashcards
+        })
+
+    return books
 
 
 # -----------------------------
-# LOCAL FALLBACK STORAGE
+# SAVE TO GOOGLE SHEETS
+# -----------------------------
+def save_to_sheets(books):
+    sheet = get_sheet()
+    if sheet is None:
+        return
+
+    rows = []
+    for b in books:
+        rows.append([
+            b["title"],
+            b["status"],
+            b["cover_base64"] or "",
+            json.dumps(b["flashcards"])
+        ])
+
+    sheet.clear()
+    sheet.append_row(["title", "status", "cover_base64", "flashcards_json"])
+    for r in rows:
+        sheet.append_row(r)
+
+
+# -----------------------------
+# LOCAL BACKUP
 # -----------------------------
 LOCAL_FILE = "books_local.json"
 
@@ -28,44 +83,48 @@ def load_local():
     except:
         return []
 
-def save_local():
+def save_local(books):
     with open(LOCAL_FILE, "w") as f:
-        json.dump(st.session_state.books, f)
+        json.dump(books, f)
 
 
 # -----------------------------
-# INITIALIZE SESSION STATE
+# INITIALIZE DATA
 # -----------------------------
+books = load_from_sheets()
+if books is None:
+    books = load_local()
+
 if "books" not in st.session_state:
-    if USE_SHEETS:
-        st.session_state.books = load_from_sheets()
-    else:
-        st.session_state.books = load_local()
-
-
-st.title("📚 Book Tracker with Flashcards & Covers")
-st.write("Testing mode active — Google Sheets not connected yet.")
+    st.session_state.books = books
 
 
 # -----------------------------
+# AUTO-SAVE FUNCTION
+# -----------------------------
+def autosave():
+    save_local(st.session_state.books)
+    save_to_sheets(st.session_state.books)
+
+
+# -----------------------------
+# UI
+# -----------------------------
+st.title("📚 Minimal Book Tracker (Google Sheets + Local Backup)")
+
+
 # ADD BOOK
-# -----------------------------
 def add_book():
-    st.subheader("➕ Add a Book")
+    st.subheader("➕ Add Book")
 
-    title = st.text_input("Enter book title")
-    status = st.selectbox("Select status", ["Reading", "Read", "TBR"])
+    title = st.text_input("Book title")
+    status = st.selectbox("Status", ["Reading", "Read", "TBR"])
+    cover_file = st.file_uploader("Upload cover", type=["jpg", "jpeg", "png"])
 
-    cover_file = st.file_uploader(
-        "Upload a book cover image (JPG or PNG)",
-        type=["jpg", "jpeg", "png"]
-    )
-
-    if st.button("Add Book"):
+    if st.button("Add"):
         cover_b64 = None
         if cover_file:
-            cover_bytes = cover_file.read()
-            cover_b64 = base64.b64encode(cover_bytes).decode("utf-8")
+            cover_b64 = base64.b64encode(cover_file.read()).decode("utf-8")
 
         st.session_state.books.append({
             "title": title,
@@ -74,92 +133,58 @@ def add_book():
             "flashcards": []
         })
 
-        if USE_SHEETS:
-            save_to_sheets(st.session_state.books)
-        else:
-            save_local()
-
-        st.success("Book added successfully!")
+        autosave()
+        st.success("Book added")
 
 
-# -----------------------------
 # VIEW BOOKS
-# -----------------------------
 def view_books():
     st.subheader("📖 Your Books")
 
-    if not st.session_state.books:
-        st.info("No books added yet.")
-        return
+    for b in st.session_state.books:
+        st.write(f"### {b['title']} — *{b['status']}*")
 
-    for i, book in enumerate(st.session_state.books):
-        st.write(f"### {i+1}. {book['title']} — *{book['status']}*")
-
-        if book.get("cover_base64"):
-            img_bytes = base64.b64decode(book["cover_base64"])
-            st.image(img_bytes, width=150)
+        if b["cover_base64"]:
+            img = base64.b64decode(b["cover_base64"])
+            st.image(img, width=150)
 
 
-# -----------------------------
 # ADD FLASHCARD
-# -----------------------------
 def add_flashcard():
     st.subheader("📝 Add Flashcard")
 
-    if not st.session_state.books:
-        st.warning("Add a book first before adding flashcards.")
+    titles = [b["title"] for b in st.session_state.books]
+    if not titles:
+        st.info("Add a book first")
         return
 
-    book_titles = [book["title"] for book in st.session_state.books]
-    selected = st.selectbox("Select a book", book_titles)
-
-    front = st.text_input("Flashcard FRONT")
-    back = st.text_area("Flashcard BACK")
+    selected = st.selectbox("Select book", titles)
+    front = st.text_input("Front")
+    back = st.text_area("Back")
 
     if st.button("Save Flashcard"):
-        index = book_titles.index(selected)
-        st.session_state.books[index]["flashcards"].append({
-            "front": front,
-            "back": back
-        })
-
-        if USE_SHEETS:
-            save_to_sheets(st.session_state.books)
-        else:
-            save_local()
-
-        st.success("Flashcard saved!")
+        idx = titles.index(selected)
+        st.session_state.books[idx]["flashcards"].append({"front": front, "back": back})
+        autosave()
+        st.success("Flashcard saved")
 
 
-# -----------------------------
-# STUDY FLASHCARDS
-# -----------------------------
-def study_flashcards():
+# STUDY
+def study():
     st.subheader("🎓 Study Flashcards")
 
-    if not st.session_state.books:
-        st.info("No books or flashcards found.")
-        return
-
-    for book in st.session_state.books:
-        if not book["flashcards"]:
+    for b in st.session_state.books:
+        if not b["flashcards"]:
             continue
 
-        st.write(f"### 📘 {book['title']}")
-
-        for i, card in enumerate(book["flashcards"]):
-            with st.expander(f"Flashcard {i+1}: {card['front']}"):
-                st.write("**Answer:**")
-                st.info(card["back"])
+        st.write(f"### 📘 {b['title']}")
+        for i, card in enumerate(b["flashcards"]):
+            with st.expander(f"{i+1}. {card['front']}"):
+                st.write(card["back"])
 
 
-# -----------------------------
-# MAIN MENU
-# -----------------------------
-menu = st.sidebar.radio(
-    "Menu",
-    ["Add Book", "View Books", "Add Flashcard", "Study Flashcards"]
-)
+# MENU
+menu = st.sidebar.radio("Menu", ["Add Book", "View Books", "Add Flashcard", "Study"])
 
 if menu == "Add Book":
     add_book()
@@ -167,5 +192,5 @@ elif menu == "View Books":
     view_books()
 elif menu == "Add Flashcard":
     add_flashcard()
-elif menu == "Study Flashcards":
-    study_flashcards()
+elif menu == "Study":
+    study()

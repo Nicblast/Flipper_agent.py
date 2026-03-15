@@ -110,7 +110,8 @@ def autosave():
 # -----------------------------
 # UI
 # -----------------------------
-st.title("📚 Minimal Book Tracker (Google Sheets + Local Backup)")
+st.title("⟡🤖⟡ I am Flipper Agent to help you actually remember stuff")
+
 
 
 # ADD BOOK

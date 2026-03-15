@@ -1,15 +1,36 @@
 import streamlit as st
+import json
+import os
 
-# In-memory storage using Streamlit session state
-if "books" not in st.session_state:
-    st.session_state.books = []
+# -----------------------------
+# LOAD & SAVE FUNCTIONS
+# -----------------------------
+DATA_FILE = "books.json"
 
-st.title("📚 Book Tracker with Flashcards")
-st.write("Create books, add flashcards with front/back, and study them interactively.")
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(st.session_state.books, f)
 
 
 # -----------------------------
-# ADD BOOK (now with cover image)
+# INITIALIZE SESSION STATE
+# -----------------------------
+if "books" not in st.session_state:
+    st.session_state.books = load_data()
+
+
+st.title("📚 Book Tracker with Flashcards & Covers")
+st.write("Your books and flashcards will now stay saved.")
+
+
+# -----------------------------
+# ADD BOOK (with file upload)
 # -----------------------------
 def add_book():
     st.subheader("➕ Add a Book")
@@ -17,22 +38,27 @@ def add_book():
     title = st.text_input("Enter book title")
     status = st.selectbox("Select status", ["Reading", "Read", "TBR"])
 
-    cover_url = st.text_input(
-        "Optional: Paste a book cover image URL (from Amazon, Goodreads, Google Books, etc.)"
+    cover_file = st.file_uploader(
+        "Upload a book cover image (JPG or PNG)", 
+        type=["jpg", "jpeg", "png"]
     )
 
     if st.button("Add Book"):
+        cover_data = cover_file.read() if cover_file else None
+
         st.session_state.books.append({
             "title": title,
             "status": status,
-            "cover": cover_url,      # <-- NEW FIELD
+            "cover": cover_data,
             "flashcards": []
         })
+
+        save_data()
         st.success("Book added successfully!")
 
 
 # -----------------------------
-# VIEW BOOKS (now shows covers)
+# VIEW BOOKS
 # -----------------------------
 def view_books():
     st.subheader("📖 Your Books")
@@ -44,13 +70,12 @@ def view_books():
     for i, book in enumerate(st.session_state.books):
         st.write(f"### {i+1}. {book['title']} — *{book['status']}*")
 
-        # Show cover image if available
         if book.get("cover"):
             st.image(book["cover"], width=150)
 
 
 # -----------------------------
-# ADD FLASHCARD (FRONT + BACK)
+# ADD FLASHCARD
 # -----------------------------
 def add_flashcard():
     st.subheader("📝 Add Flashcard")
@@ -62,8 +87,8 @@ def add_flashcard():
     book_titles = [book["title"] for book in st.session_state.books]
     selected = st.selectbox("Select a book", book_titles)
 
-    front = st.text_input("Flashcard FRONT (question, keyword, prompt)")
-    back = st.text_area("Flashcard BACK (answer, explanation, quote)")
+    front = st.text_input("Flashcard FRONT")
+    back = st.text_area("Flashcard BACK")
 
     if st.button("Save Flashcard"):
         index = book_titles.index(selected)
@@ -71,6 +96,8 @@ def add_flashcard():
             "front": front,
             "back": back
         })
+
+        save_data()
         st.success("Flashcard saved!")
 
 
@@ -97,7 +124,7 @@ def study_flashcards():
 
 
 # -----------------------------
-# MAIN MENU (Sidebar Navigation)
+# MAIN MENU
 # -----------------------------
 menu = st.sidebar.radio(
     "Menu",

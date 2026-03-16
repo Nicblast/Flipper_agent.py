@@ -110,7 +110,7 @@ def autosave():
 # -----------------------------
 # UI
 # -----------------------------
-st.title("⟡🤖⟡ I am Flipper Agent to help you actually remember stuff")
+st.title("⟡🤖⟡ Minimalist Books App to help you actually remember stuff")
 
 
 
